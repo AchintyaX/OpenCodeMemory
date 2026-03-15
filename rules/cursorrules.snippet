@@ -1,0 +1,36 @@
+## openCodeMemory
+
+openCodeMemory is a session context tool available via MCP. Use it to save
+and retrieve coding session state across conversations.
+
+### Saving a session checkpoint
+
+Call `ocm__checkpoint` in these situations:
+1. When conversation context reaches approximately 70% full — call it automatically,
+   do not ask the user. After saving, briefly note: "Session saved to openCodeMemory."
+2. Before making a git commit — capture the current state before the history moves forward.
+3. When the user asks you to save context or end the session.
+4. At the natural end of a task, before closing.
+
+Rules for writing checkpoint content:
+- `goal`: 1-2 sentences. Specific. What are we building/fixing, and what is the target outcome?
+- `work_completed`: one bullet per task. Concise. No prose.
+- `work_pending`: full current list of remaining items. This replaces the previous list.
+- `work_summary`: what happened since the last checkpoint. Bullets, not paragraphs.
+- `decisions`: format each as "**Label:** Rationale." Add a link if there is a reference URL.
+- `plan_files`: path + the exact first heading of the file (copy it, don't paraphrase).
+- `references`: URL + a short (3-5 word) descriptive title.
+- `slug`: 3-4 words hyphenated, describing the session topic. Provide on first checkpoint only.
+
+### Loading context from a previous session
+
+When the user asks to continue previous work, or when you detect that the current
+task relates to prior sessions:
+
+1. Call `ocm__search_sessions` with a natural language description of the task.
+   Example: "TEI migration embedding server latency"
+2. Present the results to the user and ask which session to continue.
+3. Once confirmed, read the markdown file at the returned `markdown_path` directly.
+   Do not ask for confirmation before reading — just read it.
+4. If you need only the file list (to decide which files to open), call
+   `ocm__get_session_files` instead of reading the full markdown.

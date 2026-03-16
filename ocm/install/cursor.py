@@ -12,21 +12,6 @@ CURSOR_MCP_CONFIG = {
     }
 }
 
-CURSOR_HOOKS_CONFIG = {
-    "version": 1,
-    "hooks": {
-        "sessionStart": [
-            {"command": "ocm-hook session-start --tool cursor"}
-        ],
-        "afterFileEdit": [
-            {"command": "ocm-hook file-edited --tool cursor"}
-        ],
-        "sessionEnd": [
-            {"command": "ocm-hook session-end --tool cursor"}
-        ],
-    },
-}
-
 RULE_SNIPPET_PATH = Path(__file__).parent.parent.parent / "rules" / "cursorrules.snippet"
 MDC_RULE_PATH = Path(__file__).parent.parent.parent / "rules" / "ocm-checkpoint.mdc"
 
@@ -60,34 +45,9 @@ def configure_mcp(project_root: Path) -> tuple[bool, str]:
 
 
 def configure_hooks(project_root: Path) -> tuple[bool, str]:
-    """Create or update .cursor/hooks.json."""
-    cursor_dir = project_root / ".cursor"
-    cursor_dir.mkdir(exist_ok=True)
-    hooks_path = cursor_dir / "hooks.json"
-
-    existing: dict = {}
-    if hooks_path.exists():
-        try:
-            existing = json.loads(hooks_path.read_text())
-        except json.JSONDecodeError:
-            existing = {}
-
-    existing.setdefault("version", 1)
-    hooks = existing.setdefault("hooks", {})
-
-    for event, new_hooks in CURSOR_HOOKS_CONFIG["hooks"].items():
-        if event not in hooks:
-            hooks[event] = new_hooks
-        else:
-            existing_cmds = {
-                h.get("command") for h in hooks[event] if isinstance(h, dict)
-            }
-            for h in new_hooks:
-                if h.get("command") not in existing_cmds:
-                    hooks[event].append(h)
-
-    hooks_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    return True, f"Hook configuration written to {hooks_path}"
+    """No-op: Cursor hooks are intentionally not configured by openCodeMemory."""
+    _ = project_root
+    return True, "Cursor hooks are not used (skipped)"
 
 
 def inject_rules(project_root: Path) -> tuple[bool, str]:
@@ -141,34 +101,8 @@ def configure_mcp_global() -> tuple[bool, str]:
 
 
 def configure_hooks_global() -> tuple[bool, str]:
-    """Create or update ~/.cursor/hooks.json."""
-    cursor_dir = Path.home() / ".cursor"
-    cursor_dir.mkdir(exist_ok=True)
-    hooks_path = cursor_dir / "hooks.json"
-
-    existing: dict = {}
-    if hooks_path.exists():
-        try:
-            existing = json.loads(hooks_path.read_text())
-        except json.JSONDecodeError:
-            existing = {}
-
-    existing.setdefault("version", 1)
-    hooks = existing.setdefault("hooks", {})
-
-    for event, new_hooks in CURSOR_HOOKS_CONFIG["hooks"].items():
-        if event not in hooks:
-            hooks[event] = new_hooks
-        else:
-            existing_cmds = {
-                h.get("command") for h in hooks[event] if isinstance(h, dict)
-            }
-            for h in new_hooks:
-                if h.get("command") not in existing_cmds:
-                    hooks[event].append(h)
-
-    hooks_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    return True, f"Hook configuration written to {hooks_path}"
+    """No-op: Cursor hooks are intentionally not configured by openCodeMemory."""
+    return True, "Cursor hooks are not used globally (skipped)"
 
 
 def inject_mdc_rule(project_root: Path) -> tuple[bool, str]:

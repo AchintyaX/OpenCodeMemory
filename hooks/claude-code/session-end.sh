@@ -1,3 +1,4 @@
 #!/bin/bash
-# Fires on Stop. Reads session context from stdin JSON.
-exec uv run --directory "$(dirname "$0")/../.." python -m ocm.hooks.handler session-end --tool claude-code
+# Deprecated: replaced by git diff in ocm__checkpoint and rules-based session end.
+# No longer registered in settings.json.
+exit 0

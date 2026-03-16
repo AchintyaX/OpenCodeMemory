@@ -1,12 +1,27 @@
+---
+description: openCodeMemory checkpoint and session lifecycle instructions
+alwaysApply: true
+---
+
 ## openCodeMemory
 
 openCodeMemory is a session context tool available via MCP. Use it to save
 and retrieve coding session state across conversations.
 
+Use `conversation_id` from your context as the `session_id` for all ocm__ calls.
+
+### Session lifecycle
+
+**Session start**: Call `ocm__checkpoint` as your first tool use with the
+`conversation_id` as `session_id` and an initial `goal`. This auto-creates the session record.
+
+**Session end**: When you have finished responding, call `ocm__checkpoint` with
+`status="closed"` as your final tool use.
+
 ### Saving a session checkpoint
 
 Call `ocm__checkpoint` in these situations:
-1. When conversation context reaches approximately 70% full — call it automatically,
+1. When conversation context reaches approximately 70% full — call automatically,
    do not ask the user. After saving, briefly note: "Session saved to openCodeMemory."
 2. Before making a git commit — capture the current state before the history moves forward.
 3. When the user asks you to save context or end the session.
@@ -34,12 +49,3 @@ task relates to prior sessions:
    Do not ask for confirmation before reading — just read it.
 4. If you need only the file list (to decide which files to open), call
    `ocm__get_session_files` instead of reading the full markdown.
-
-### Session lifecycle
-
-**Session start**: At the start of every conversation, `$CLAUDE_SESSION_ID` is injected
-into your context via the UserPromptSubmit hook. Call `ocm__checkpoint` as your first tool
-use, passing this session_id and an initial `goal`. This auto-creates the session record.
-
-**Session end**: When you have finished responding and are about to stop, call
-`ocm__checkpoint` with `status="closed"` as your final tool use.

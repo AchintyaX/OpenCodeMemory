@@ -28,6 +28,7 @@ CURSOR_HOOKS_CONFIG = {
 }
 
 RULE_SNIPPET_PATH = Path(__file__).parent.parent.parent / "rules" / "cursorrules.snippet"
+MDC_RULE_PATH = Path(__file__).parent.parent.parent / "rules" / "ocm-checkpoint.mdc"
 
 
 def is_installed() -> bool:
@@ -168,6 +169,18 @@ def configure_hooks_global() -> tuple[bool, str]:
 
     hooks_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     return True, f"Hook configuration written to {hooks_path}"
+
+
+def inject_mdc_rule(project_root: Path) -> tuple[bool, str]:
+    """Write .cursor/rules/ocm-checkpoint.mdc with alwaysApply: true."""
+    rules_dir = project_root / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    mdc_path = rules_dir / "ocm-checkpoint.mdc"
+    if mdc_path.exists():
+        return True, ".cursor/rules/ocm-checkpoint.mdc already exists (skipped)"
+    snippet = MDC_RULE_PATH.read_text(encoding="utf-8")
+    mdc_path.write_text(snippet, encoding="utf-8")
+    return True, f"Cursor rule written to {mdc_path}"
 
 
 def inject_rules_global() -> tuple[bool, str]:

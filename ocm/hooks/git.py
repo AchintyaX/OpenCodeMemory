@@ -23,6 +23,32 @@ def get_diff_stat(sha_start: str, project_root: Path) -> str:
         return ""
 
 
+def get_changed_files(sha_start: str, project_root: Path) -> list[tuple[str, str]]:
+    """Return (file_path, change_type) for all files changed since sha_start.
+    change_type: 'created' | 'modified' | 'deleted'
+    """
+    try:
+        import git
+        repo = git.Repo(project_root, search_parent_directories=True)
+        raw = repo.git.diff("--name-status", sha_start)
+        result = []
+        for line in raw.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            status, path = parts
+            if status.startswith("A"):
+                change_type = "created"
+            elif status.startswith("D"):
+                change_type = "deleted"
+            else:
+                change_type = "modified"
+            result.append((path, change_type))
+        return result
+    except Exception:
+        return []
+
+
 def get_project_name(project_root: Path) -> str:
     """Derive project name from git remote URL or directory name."""
     try:

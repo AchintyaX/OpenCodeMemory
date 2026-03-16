@@ -10,20 +10,18 @@ def _ocm_root() -> Path:
     return Path(__file__).parent.parent.parent.resolve()
 
 
-def _hook_cmd(subcommand: str) -> str:
-    return f"uv run --directory {_ocm_root()} python -m ocm.hooks.handler {subcommand} --tool claude-code"
+def _hook_cmd() -> str:
+    return (
+        'SESSION_ID="${CLAUDE_SESSION_ID:-}"; '
+        'echo "{\\"additionalContext\\": \\"openCodeMemory session_id: ${SESSION_ID}. '
+        'Call ocm__checkpoint with this session_id as your first tool use if starting a new session.\\"}"'
+    )
 
 
 def _make_hook_config() -> dict:
     return {
         "UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": _hook_cmd("session-start")}]},
-        ],
-        "PostToolUse": [
-            {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": _hook_cmd("file-edited")}]},
-        ],
-        "Stop": [
-            {"matcher": "", "hooks": [{"type": "command", "command": _hook_cmd("session-end")}]},
+            {"matcher": "", "hooks": [{"type": "command", "command": _hook_cmd()}]},
         ],
     }
 

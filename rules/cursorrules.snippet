@@ -34,3 +34,12 @@ task relates to prior sessions:
    Do not ask for confirmation before reading — just read it.
 4. If you need only the file list (to decide which files to open), call
    `ocm__get_session_files` instead of reading the full markdown.
+
+### Session lifecycle
+
+**Session start**: At the start of every conversation, use `conversation_id` from your
+context as the `session_id`. Call `ocm__checkpoint` as your first tool use, passing this
+session_id and an initial `goal`. This auto-creates the session record.
+
+**Session end**: When you have finished responding, call `ocm__checkpoint` with
+`status="closed"` as your final tool use.

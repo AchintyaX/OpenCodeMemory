@@ -57,6 +57,8 @@ def cmd_init(yes: bool) -> None:
         _report(*module.configure_mcp(project_root))
         _report(*module.configure_hooks(project_root))
         _report(*module.inject_rules(project_root))
+        if hasattr(module, "inject_mdc_rule"):
+            _report(*module.inject_mdc_rule(project_root))
 
     # 8. Update global registry
     _report(*_update_registry(project_root, db_path))

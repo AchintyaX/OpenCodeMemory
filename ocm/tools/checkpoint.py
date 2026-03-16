@@ -30,6 +30,7 @@ def ocm__checkpoint(
     session_id: str,
     slug: str | None = None,
     goal: str | None = None,
+    tool: str = "claude-code",
     work_completed: list[str] | None = None,
     work_pending: list[str] | None = None,
     work_summary: list[str] | None = None,
@@ -49,7 +50,29 @@ def ocm__checkpoint(
         "SELECT * FROM sessions WHERE id = ?", [session_id]
     ).fetchone()
     if session is None:
-        raise ValueError(f"Session not found: {session_id}. Call ocm-hook session-start first.")
+        from ocm.hooks.git import get_head_sha, get_project_name
+        try:
+            git_sha = get_head_sha(db.project_root)
+            project_name = get_project_name(db.project_root)
+        except Exception:
+            git_sha = None
+            project_name = db.project_root.name
+
+        filename = make_markdown_filename(now, tool, None, session_id)
+        rel_path = f"sessions/{filename}"
+        sessions_dir = db.ocm_dir / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        (sessions_dir / filename).write_text(
+            f"---\nsession_id: {session_id}\ntool: {tool}\nproject: {project_name}\n---\n",
+            encoding="utf-8",
+        )
+        db.execute(
+            """INSERT INTO sessions (id, project, tool, started_at, status, markdown_path, git_sha_start)
+               VALUES (?, ?, ?, ?, 'open', ?, ?)""",
+            [session_id, project_name, tool, now, rel_path, git_sha],
+        )
+        db.commit()
+        session = db.execute("SELECT * FROM sessions WHERE id = ?", [session_id]).fetchone()
 
     # --- Update sessions row ---
     if goal is not None:
@@ -169,7 +192,18 @@ def _upsert_files(
     db: "Database",
 ) -> None:
     """Upsert file changes from the journal into session_files."""
-    for entry in journal_entries:
+    entries = list(journal_entries)
+
+    # Fall back to git diff when PostToolUse hook not running
+    if not entries and session["git_sha_start"]:
+        from ocm.hooks.git import get_changed_files
+        git_files = get_changed_files(session["git_sha_start"], db.project_root)
+        entries = [
+            {"path": p, "tool": "Write" if ct == "created" else "Edit"}
+            for p, ct in git_files
+        ]
+
+    for entry in entries:
         raw_path = entry.get("path", "")
         tool_name = entry.get("tool", "Edit")
 

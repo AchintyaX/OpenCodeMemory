@@ -1,6 +1,7 @@
 ---
 description: openCodeMemory checkpoint and session lifecycle instructions
 alwaysApply: true
+ocm-version: 0.1.0
 ---
 
 ## openCodeMemory

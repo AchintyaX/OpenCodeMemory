@@ -37,7 +37,7 @@ AI coding assistants lose all context when a session ends — what you were buil
               └──────────────────────────────────────────────────────┘
 ```
 
-**Hook usage** — Cursor hook integration is intentionally disabled. Claude uses a prompt-submit hook to inject session context; touched files are derived at checkpoint time (journal if present, otherwise git fallback).
+**Hook usage** — Hooks are profile-driven. Claude defaults to a minimal hook profile; Cursor defaults to no hooks unless enabled. Both assistants can use a shared `postToolUse` semantic-checkpoint policy (threshold: 5 tool calls).
 
 **Active MCP tool flow** — the AI assistant calls `ocm__checkpoint` to persist a snapshot and `ocm__search_sessions` to retrieve past context. Search returns a `markdown_path`; the assistant reads the file directly.
 
@@ -53,25 +53,47 @@ AI coding assistants lose all context when a session ends — what you were buil
 
 ## Installation
 
-### 1) Install the package
+### From PyPI (recommended)
 
 ```bash
-# Clone the repo
-git clone https://github.com/<org>/openCodeMemory
-cd openCodeMemory
-
-# Install dependencies with uv
-uv sync
-
-# Run CLI commands through uv
-uv run ocm --help
-
-# Or install editable with pip
-pip install -e .
+pip install opencodememory
 ```
 
-If you use `pip install -e .`, `ocm` and `ocm-hook` are available directly.
-If you use `uv sync`, run commands as `uv run ocm ...` unless your venv is activated.
+Or with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install opencodememory
+```
+
+After installing, `ocm` and `ocm-hook` are available directly on your PATH.
+
+### From source
+
+```bash
+git clone https://github.com/AchintyaX/OpenCodeMemory
+cd OpenCodeMemory
+uv sync
+uv run ocm --help
+```
+
+### Quick start
+
+```bash
+pip install opencodememory
+ocm install                    # one-time global config — works in every project
+# Open Claude Code or Cursor and ask it to "save a checkpoint"
+```
+
+---
+
+## Safety & merge behavior
+
+openCodeMemory writes into your existing IDE configuration. It is designed to be safe to run against a setup you already use:
+
+- **Idempotent** — rule injections are wrapped in `<!-- BEGIN openCodeMemory -->` / `<!-- END openCodeMemory -->` sentinel markers. Re-running `ocm init` finds and replaces the existing block; it never duplicates content. Hook entries are only appended when the exact command isn't already present.
+- **Atomic writes** — every `settings.json`, `CLAUDE.md`, and `.cursorrules` mutation goes through a temp-file + `os.replace()`, so an interrupted install never leaves a truncated config.
+- **Fail-loud on bad JSON** — if `.claude/settings.json` (or any other JSON file we touch) is malformed when we try to read it, `ocm install` aborts with a clear error message rather than silently rewriting the file. Your existing config is never discarded on a parse error.
+- **Versioned `.mdc` rule** — `.cursor/rules/ocm-checkpoint.mdc` ships with an `ocm-version:` frontmatter field. Future upgrades refresh it only when the version changes; user-modified copies with a different (or missing) version are left untouched.
 
 ---
 
@@ -119,7 +141,7 @@ ocm init
 2. Creates `.openCodeMemory/memory.db` and `sessions/` directory
 3. Adds `.openCodeMemory/` to `.gitignore`
 4. Detects installed assistants (Claude Code, Cursor)
-5. For each assistant: registers MCP and injects usage rules
+5. For each assistant: registers MCP, configures selected hook profile, and injects usage rules
 6. For Cursor projects: writes `.cursor/rules/ocm-checkpoint.mdc`
 7. Registers the project in `~/.openCodeMemory/registry.json`
 
@@ -127,7 +149,7 @@ ocm init
 
 ## Claude Code Setup
 
-`ocm init` handles this automatically. Here's what it configures:
+`ocm init` handles this automatically. By default, Claude uses `--claude-hooks minimal`.
 
 **MCP server** registered at project scope:
 
@@ -135,38 +157,43 @@ ocm init
 claude mcp add --scope project opencodememory -- uv run python -m ocm.server
 ```
 
-**Hooks** written to `.claude/settings.json`:
+> If you installed via `pip install opencodememory` without `uv`, replace `uv run python` with `python`.
+
+**Hooks** written to `.claude/settings.json` (profile-dependent):
 
 
-| Event              | Hook command                                                           | Purpose                                                                     |
-| ------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `UserPromptSubmit` | command hook that injects `additionalContext` with `CLAUDE_SESSION_ID` | Ensures the assistant receives session id and calls `ocm__checkpoint` first |
+| Event | Purpose |
+| --- | --- |
+| `SessionStart` | Initializes session row via `ocm-hook session-start` |
+| `UserPromptSubmit` | Injects `CLAUDE_SESSION_ID` reminder context |
+| `PreToolUse` | Blocks tool calls when semantic checkpoint is stale |
+| `PostToolUse` | Increments checkpoint counter and writes machine checkpoint |
+| `Stop` | Marks session closed via `ocm-hook session-end` |
 
 
 Notes:
 
-- Claude setup currently does not install `PostToolUse`/`Stop` hooks via `ocm init`.
-- File tracking for Claude falls back to git diff at checkpoint time when no file-edit journal exists.
-- Session closure is typically done by calling `ocm__checkpoint` with `status="closed"` per injected rules.
+- `--claude-hooks full` additionally records file edits with `ocm-hook file-edited`.
+- Semantic checkpoint enforcement is hybrid: reminder first, then gate via `PreToolUse` after threshold is exceeded.
 
-**Rules** are appended to `CLAUDE.md` to enforce checkpoint lifecycle.
+**Rules** are appended to `CLAUDE.md` inside `<!-- BEGIN openCodeMemory -->` / `<!-- END openCodeMemory -->` markers.
 
 ---
 
 ## Cursor Setup
 
-`ocm init` handles this automatically. Here's what it configures:
+`ocm init` handles this automatically. Cursor hooks are opt-in (`--cursor-hooks minimal|full`).
 
 **MCP server** registered in `.cursor/mcp.json`.
 
-**Hooks** are not configured for Cursor.
-
-Session metadata and file tracking are captured on `ocm__checkpoint` (with git fallback when no journal data exists).
-
+**Hooks** are profile-based:
+- `none` (default): no Cursor hook setup
+- `minimal`: `sessionStart`, `preToolUse`, `postToolUse`, `stop`
+- `full`: `minimal` plus `afterFileEdit` journal tracking
 
 **Rules**:
 
-- Appends openCodeMemory guidance to `.cursorrules`
+- Appends openCodeMemory guidance to `.cursorrules` (inside sentinel markers)
 - Writes `.cursor/rules/ocm-checkpoint.mdc` for always-on checkpoint instructions in Cursor
 
 ---
@@ -178,6 +205,8 @@ Session metadata and file tracking are captured on `ocm__checkpoint` (with git f
 ```bash
 ocm install                 # One-time global setup for detected assistants
 ocm init                    # Optional project-local setup + project rules
+ocm help                    # List all ocm commands with descriptions
+ocm checkpoint              # Write/update session checkpoint from CLI
 ocm list                    # List recent sessions (default: last 10)
 ocm list --limit 20         # Last 20 sessions
 ocm list --tool claude-code # Filter by tool
@@ -185,6 +214,8 @@ ocm search "Redis caching"  # BM25 natural language search
 ocm show <session_id>       # Print full session markdown
 ocm export <session_id>     # Copy markdown path to clipboard
 ocm rebuild-index           # Rebuild FTS5 from session_chunks
+ocm uninstall               # Remove OCM hooks/rules from project config (storage preserved)
+ocm uninstall --global      # Remove OCM global hooks/rules (storage preserved)
 ```
 
 ### MCP Tools (called automatically by the AI assistant)
@@ -211,11 +242,37 @@ ocm rebuild-index           # Rebuild FTS5 from session_chunks
 4. **Session closed**
   - Claude/Cursor: assistant can explicitly close with `ocm__checkpoint(..., status="closed")`
 
+5. **Semantic checkpoint policy (when hook profile enabled)**
+  - Counter increments at `postToolUse`
+  - At 5 tool calls, hook injects reminder context
+  - If still stale, `preToolUse` denies further tools until semantic checkpoint is written
+
 ### Resuming a Previous Session
 
 The AI assistant automatically searches for related sessions when starting a new task. To trigger manually:
 
 > "Search openCodeMemory for the Redis caching work from last week"
+
+---
+
+## Removing openCodeMemory
+
+`ocm uninstall` removes openCodeMemory's hooks and rules from your IDE config without touching your session data.
+
+**What is removed:**
+- Hook entries from `.claude/settings.json` / `~/.claude/settings.json` (only entries whose command contains `ocm-hook` — other hooks are untouched)
+- The `<!-- BEGIN openCodeMemory -->` ... `<!-- END openCodeMemory -->` block from `CLAUDE.md` and `.cursorrules`
+- The `opencodememory` key from `.cursor/mcp.json` / `~/.cursor/mcp.json`
+- `.cursor/rules/ocm-checkpoint.mdc` — only when its `ocm-version` matches the installed version; user-modified copies are left in place
+
+**What is NOT removed:**
+- `.openCodeMemory/` (sessions, DB) — delete manually if desired
+- `~/.openCodeMemory/` (global sessions, DB, registry) — delete manually if desired
+
+```bash
+ocm uninstall               # project-local config (run from inside the project)
+ocm uninstall --global      # global (~/.claude, ~/.cursor) config
+```
 
 ---
 
@@ -237,11 +294,11 @@ Project mode:
 
 Global mode:
 
+```
 ~/.openCodeMemory/
 ├── memory.db          # Global SQLite DB used when project DB is absent
 ├── sessions/*.md      # Global markdown sessions
 └── registry.json      # Paths to project DBs (used by global search)
-
 ```
 
 **Markdown is the source of truth.** If `memory.db` is deleted or corrupted, run `ocm rebuild-index` to restore the search index from the markdown files.
@@ -257,5 +314,3 @@ Global mode:
 - **No external network calls** — 100% local, all data stays in `.openCodeMemory/`
 - **No ORM** — use stdlib `sqlite3` directly
 - Follow existing code style; discuss new dependencies in an issue before adding them
-```
-

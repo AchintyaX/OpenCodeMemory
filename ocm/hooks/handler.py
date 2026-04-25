@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -33,6 +34,67 @@ def _resolve_session_id(data: dict) -> str:
         or os.environ.get("CLAUDE_SESSION_ID")
         or "unknown"
     )
+
+
+def _semantic_state_path(session_id: str, ocm_dir: Path) -> Path:
+    return ocm_dir / f"semantic_state_{session_id}.json"
+
+
+def _read_semantic_state(session_id: str, ocm_dir: Path) -> dict[str, Any]:
+    spath = _semantic_state_path(session_id, ocm_dir)
+    if not spath.exists():
+        return {
+            "tool_calls_since_semantic_checkpoint": 0,
+            "last_semantic_checkpoint_at": None,
+            "last_checkpoint_mode": "machine",
+            "stale_semantic_required": False,
+        }
+    try:
+        return json.loads(spath.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "tool_calls_since_semantic_checkpoint": 0,
+            "last_semantic_checkpoint_at": None,
+            "last_checkpoint_mode": "machine",
+            "stale_semantic_required": False,
+        }
+
+
+def _write_semantic_state(session_id: str, ocm_dir: Path, state: dict[str, Any]) -> None:
+    _semantic_state_path(session_id, ocm_dir).write_text(
+        json.dumps(state, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _is_ocm_checkpoint_tool_use(data: dict[str, Any]) -> bool:
+    tool_name = str(data.get("tool_name", "")).lower()
+    if "checkpoint" in tool_name and "ocm" in tool_name:
+        return True
+    tool_input = data.get("tool_input")
+    if isinstance(tool_input, dict):
+        serialized = json.dumps(tool_input).lower()
+        return "ocm__checkpoint" in serialized
+    return False
+
+
+def _is_semantic_checkpoint_tool_use(data: dict[str, Any]) -> bool:
+    if not _is_ocm_checkpoint_tool_use(data):
+        return False
+    tool_input = data.get("tool_input")
+    if isinstance(tool_input, dict):
+        semantic_keys = {
+            "goal",
+            "work_completed",
+            "work_pending",
+            "work_summary",
+            "decisions",
+            "plan_files",
+            "references",
+        }
+        return any(k in tool_input and tool_input.get(k) for k in semantic_keys)
+    # Unknown shape from hook payload: assume semantic if checkpoint tool use occurred.
+    return True
 
 
 @click.group()
@@ -90,6 +152,16 @@ def session_start(tool: str) -> None:
             [session_id, project_name, tool, now, rel_path, git_sha],
         )
         db.commit()
+        _write_semantic_state(
+            session_id,
+            db.ocm_dir,
+            {
+                "tool_calls_since_semantic_checkpoint": 0,
+                "last_semantic_checkpoint_at": None,
+                "last_checkpoint_mode": "machine",
+                "stale_semantic_required": False,
+            },
+        )
     except Exception as e:
         # Hook errors must not block the IDE; log to stderr and exit 0
         print(f"ocm-hook session-start error: {e}", file=sys.stderr)
@@ -170,8 +242,119 @@ def session_end(tool: str) -> None:
                 [now, git_sha, session_id],
             )
             db.commit()
+
+        # Best-effort state cleanup
+        try:
+            _semantic_state_path(session_id, db.ocm_dir).unlink(missing_ok=True)
+        except Exception:
+            pass
     except Exception as e:
         print(f"ocm-hook session-end error: {e}", file=sys.stderr)
+
+
+@main.command("post-tool-use")
+@click.option("--tool", default="claude-code", help="IDE tool name")
+@click.option("--threshold", default=5, type=int, help="Semantic checkpoint threshold in tool calls")
+def post_tool_use(tool: str, threshold: int) -> None:
+    """Handle post-tool-use lifecycle. Reads JSON from stdin."""
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        data = {}
+
+    session_id = _resolve_session_id(data)
+    project_root = _resolve_project_root(data)
+
+    try:
+        db = _open_or_skip(project_root)
+        if db is None:
+            return
+
+        # Ensure session exists (or auto-create via checkpoint path).
+        from ocm.tools.checkpoint import ocm__checkpoint
+        from ocm.tools import checkpoint as cp_module
+
+        cp_module._db = db
+
+        state = _read_semantic_state(session_id, db.ocm_dir)
+
+        if _is_semantic_checkpoint_tool_use(data):
+            state["tool_calls_since_semantic_checkpoint"] = 0
+            state["last_semantic_checkpoint_at"] = int(time.time())
+            state["last_checkpoint_mode"] = "semantic"
+            state["stale_semantic_required"] = False
+            _write_semantic_state(session_id, db.ocm_dir, state)
+            return
+
+        # Keep session freshness current after every tool call.
+        if not _is_ocm_checkpoint_tool_use(data):
+            ocm__checkpoint(session_id=session_id, tool=tool)
+
+        count = int(state.get("tool_calls_since_semantic_checkpoint") or 0) + 1
+        state["tool_calls_since_semantic_checkpoint"] = count
+        state["last_checkpoint_mode"] = "machine"
+        if count >= threshold:
+            state["stale_semantic_required"] = True
+            reminder = (
+                f"openCodeMemory reminder: semantic checkpoint required for session {session_id}. "
+                f"Please call ocm__checkpoint with updated goal/work_summary/decisions now "
+                f"(threshold={threshold} tool calls)."
+            )
+            # Emit both Cursor and Claude-style context fields.
+            print(json.dumps({
+                "additional_context": reminder,
+                "additionalContext": reminder,
+            }))
+        _write_semantic_state(session_id, db.ocm_dir, state)
+    except Exception as e:
+        print(f"ocm-hook post-tool-use error: {e}", file=sys.stderr)
+
+
+@main.command("pre-tool-use")
+@click.option("--threshold", default=5, type=int, help="Semantic checkpoint threshold in tool calls")
+def pre_tool_use(threshold: int) -> None:
+    """Gate tool use when semantic checkpoint is stale. Reads JSON from stdin."""
+    _ = threshold
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        data = {}
+
+    session_id = _resolve_session_id(data)
+    project_root = _resolve_project_root(data)
+
+    try:
+        db = _open_or_skip(project_root)
+        if db is None:
+            return
+        state = _read_semantic_state(session_id, db.ocm_dir)
+        if not state.get("stale_semantic_required"):
+            return
+
+        # Allow checkpoint tool itself to pass through so the model can recover.
+        if _is_ocm_checkpoint_tool_use(data):
+            return
+
+        msg = (
+            f"Semantic checkpoint required for session {session_id}. "
+            "Call ocm__checkpoint with updated semantic fields before more tool use."
+        )
+        # Emit responses compatible with both Cursor and Claude.
+        print(json.dumps({
+            "permission": "deny",
+            "user_message": msg,
+            "agent_message": msg,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": msg,
+            },
+        }))
+        raise SystemExit(2)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"ocm-hook pre-tool-use error: {e}", file=sys.stderr)
 
 
 def _open_or_skip(project_root: Path):

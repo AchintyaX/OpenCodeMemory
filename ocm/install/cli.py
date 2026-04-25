@@ -5,6 +5,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -20,7 +21,19 @@ def main() -> None:
 
 @main.command("init")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def cmd_init(yes: bool) -> None:
+@click.option(
+    "--cursor-hooks",
+    default="none",
+    type=click.Choice(["none", "minimal", "full"]),
+    help="Cursor hook profile to configure.",
+)
+@click.option(
+    "--claude-hooks",
+    default="minimal",
+    type=click.Choice(["none", "minimal", "full"]),
+    help="Claude Code hook profile to configure.",
+)
+def cmd_init(yes: bool, cursor_hooks: str, claude_hooks: str) -> None:
     """One-time setup: create storage, configure IDE hooks and MCP server."""
     # 1. Detect project root
     project_root = _find_project_root(Path.cwd())
@@ -55,7 +68,8 @@ def cmd_init(yes: bool) -> None:
     for name, module in assistants:
         click.echo(f"\nConfiguring {name}:")
         _report(*module.configure_mcp(project_root))
-        _report(*module.configure_hooks(project_root))
+        hook_profile = claude_hooks if name == "Claude Code" else cursor_hooks
+        _report(*module.configure_hooks(project_root, profile=hook_profile))
         _report(*module.inject_rules(project_root))
         if hasattr(module, "inject_mdc_rule"):
             _report(*module.inject_mdc_rule(project_root))
@@ -68,7 +82,19 @@ def cmd_init(yes: bool) -> None:
 
 @main.command("install")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def cmd_install(yes: bool) -> None:
+@click.option(
+    "--cursor-hooks",
+    default="none",
+    type=click.Choice(["none", "minimal", "full"]),
+    help="Cursor global hook profile to configure.",
+)
+@click.option(
+    "--claude-hooks",
+    default="minimal",
+    type=click.Choice(["none", "minimal", "full"]),
+    help="Claude Code global hook profile to configure.",
+)
+def cmd_install(yes: bool, cursor_hooks: str, claude_hooks: str) -> None:
     """One-time global setup: central DB + global IDE hooks and MCP server."""
     # 1. Create ~/.openCodeMemory/ + memory.db
     ocm_dir = Path.home() / ".openCodeMemory"
@@ -95,7 +121,8 @@ def cmd_install(yes: bool) -> None:
     for name, module in assistants:
         click.echo(f"\nConfiguring {name} (global):")
         _report(*module.configure_mcp_global())
-        _report(*module.configure_hooks_global())
+        hook_profile = claude_hooks if name == "Claude Code" else cursor_hooks
+        _report(*module.configure_hooks_global(profile=hook_profile))
         _report(*module.inject_rules_global())
 
     click.echo("\n✓ openCodeMemory installed globally.")
@@ -247,7 +274,167 @@ def cmd_rebuild_index() -> None:
     click.echo(f"✓ Rebuilt FTS index for {count} sessions.")
 
 
+@main.command("checkpoint")
+@click.option("--session-id", default=None, help="Session id (required unless --from-stdin).")
+@click.option("--from-stdin", is_flag=True, help="Read hook-style JSON payload from stdin.")
+@click.option("--tool", default=None, help="Tool name (cursor|claude-code|antigravity).")
+@click.option("--slug", default=None, help="Session slug.")
+@click.option("--goal", default=None, help="Session goal.")
+@click.option("--status", default=None, help="Session status.")
+@click.option("--completed", "work_completed", multiple=True, help="Work completed item (repeat).")
+@click.option("--pending", "work_pending", multiple=True, help="Work pending item (repeat).")
+@click.option("--summary", "work_summary", multiple=True, help="Work summary item (repeat).")
+@click.option("--decision", "decisions", multiple=True, help="Architecture decision item (repeat).")
+@click.option("--plan-file", "plan_files", multiple=True, help='Plan file JSON, e.g. {"path":"...","header":"## ..."}')
+@click.option("--reference", "references", multiple=True, help='Reference JSON, e.g. {"url":"...","title":"..."}')
+def cmd_checkpoint(
+    session_id: str | None,
+    from_stdin: bool,
+    tool: str | None,
+    slug: str | None,
+    goal: str | None,
+    status: str | None,
+    work_completed: tuple[str, ...],
+    work_pending: tuple[str, ...],
+    work_summary: tuple[str, ...],
+    decisions: tuple[str, ...],
+    plan_files: tuple[str, ...],
+    references: tuple[str, ...],
+) -> None:
+    """Write or update a session checkpoint from CLI."""
+    payload: dict[str, Any] = {}
+    if from_stdin:
+        try:
+            payload = json.load(sys.stdin)
+        except json.JSONDecodeError as e:
+            click.echo(f"Error: invalid JSON from stdin: {e}", err=True)
+            sys.exit(1)
+
+    resolved_session_id = (
+        session_id
+        or payload.get("session_id")
+        or payload.get("conversation_id")
+    )
+    if not resolved_session_id:
+        click.echo("Error: --session-id is required (or provide session_id/conversation_id via --from-stdin).", err=True)
+        sys.exit(1)
+
+    resolved_tool = (
+        tool
+        or payload.get("tool")
+        or ("cursor" if payload.get("conversation_id") else "claude-code")
+    )
+
+    from ocm.tools.checkpoint import ocm__checkpoint
+
+    checkpoint_payload = payload.get("checkpoint") if isinstance(payload.get("checkpoint"), dict) else {}
+
+    result = ocm__checkpoint(
+        session_id=resolved_session_id,
+        tool=resolved_tool,
+        slug=slug or payload.get("slug") or checkpoint_payload.get("slug"),
+        goal=goal or payload.get("goal") or checkpoint_payload.get("goal"),
+        status=status or payload.get("status") or checkpoint_payload.get("status"),
+        work_completed=_merged_list(work_completed, payload.get("work_completed"), checkpoint_payload.get("work_completed")),
+        work_pending=_merged_list(work_pending, payload.get("work_pending"), checkpoint_payload.get("work_pending")),
+        work_summary=_merged_list(work_summary, payload.get("work_summary"), checkpoint_payload.get("work_summary")),
+        decisions=_merged_list(decisions, payload.get("decisions"), checkpoint_payload.get("decisions")),
+        plan_files=_merged_json_list(plan_files, payload.get("plan_files"), checkpoint_payload.get("plan_files")),
+        references=_merged_json_list(references, payload.get("references"), checkpoint_payload.get("references")),
+    )
+
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("uninstall")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
+@click.option("--global", "global_", is_flag=True, help="Remove global installation instead of project-local.")
+def cmd_uninstall(yes: bool, global_: bool) -> None:
+    """Remove openCodeMemory hooks and rules from IDE configuration."""
+    from ocm.install import claude_code, cursor
+
+    if global_:
+        click.echo("Removing openCodeMemory global configuration:")
+        _report(*claude_code.remove_hooks_global())
+        _report(*claude_code.remove_rules_global())
+        _report(*cursor.remove_hooks_global())
+        click.echo("\n✓ Global openCodeMemory configuration removed.")
+        click.echo("  Storage (~/.openCodeMemory/) was NOT deleted. Remove it manually if desired.")
+        return
+
+    project_root = _find_project_root(Path.cwd())
+    click.echo(f"Removing openCodeMemory from project: {project_root}")
+
+    for name, module in [("Claude Code", claude_code), ("Cursor", cursor)]:
+        click.echo(f"\n{name}:")
+        _report(*module.remove_hooks(project_root))
+        _report(*module.remove_rules(project_root))
+        if hasattr(module, "remove_mdc_rule"):
+            _report(*module.remove_mdc_rule(project_root))
+
+    click.echo("\n✓ openCodeMemory removed from project configuration.")
+    click.echo("  Session data (.openCodeMemory/) was NOT deleted. Remove it manually if desired.")
+
+
+@main.command("help")
+@click.argument("command_name", required=False)
+@click.pass_context
+def cmd_help(ctx: click.Context, command_name: str | None) -> None:
+    """Show command list or command-specific help."""
+    if command_name:
+        cmd = main.commands.get(command_name)
+        if cmd is None:
+            click.echo(f"Unknown command: {command_name}", err=True)
+            sys.exit(2)
+        click.echo(cmd.get_help(ctx))
+        return
+
+    click.echo("openCodeMemory CLI commands:\n")
+    for name in sorted(main.commands):
+        cmd = main.commands[name]
+        short = (cmd.help or "").strip().splitlines()[0] if cmd.help else ""
+        click.echo(f"  {name:<14} {short}")
+    click.echo("\nUse `ocm <command> --help` for detailed usage.")
+
+
 # --- Helpers ---
+
+def _merged_list(*values: Any) -> list[str] | None:
+    merged: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, tuple):
+            merged.extend(str(v) for v in value if str(v).strip())
+            continue
+        if isinstance(value, list):
+            merged.extend(str(v) for v in value if str(v).strip())
+            continue
+    return merged or None
+
+
+def _merged_json_list(*values: Any) -> list[dict] | None:
+    merged: list[dict] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, tuple):
+            for raw in value:
+                raw = str(raw).strip()
+                if not raw:
+                    continue
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    raise click.ClickException(f"Invalid JSON list item: {e}") from e
+                if isinstance(parsed, dict):
+                    merged.append(parsed)
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    merged.append(item)
+    return merged or None
 
 def _find_project_root(cwd: Path) -> Path:
     """Walk up from cwd to find a .git directory."""

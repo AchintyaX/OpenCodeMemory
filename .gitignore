@@ -5,4 +5,4 @@ dist/
 .cursor/
 .cursorrules
 .mcp.json
- ocm/__pycache__/*
+ocm/__pycache__/*

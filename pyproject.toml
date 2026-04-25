@@ -1,5 +1,5 @@
 [project]
-name = "opencodememory"
+name = "ocm-session-memory"
 dynamic = ["version"]
 description = "Persistent local session memory for AI coding assistants via MCP and CLI."
 readme = "README.md"

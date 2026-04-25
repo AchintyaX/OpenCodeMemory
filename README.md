@@ -10,31 +10,32 @@ AI coding assistants lose all context when a session ends — what you were buil
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    IDE (Claude Code / Cursor)                     │
-│                                                                   │
-│  ┌──────────────┐  MCP         ┌───────────────────────────────┐   │
-│  │  AI Model    │──────────▶   │  ocm.server (FastMCP)         │   │
-│  │  (checkpoint │  (stdio)     │  ocm__checkpoint              │   │
-│  │   / search)  │◀──────────   │  ocm__search_sessions         │   │
-│  └──────────────┘  result      │  ocm__list_sessions           │   │
-│                                 │  ocm__get_session_files       │   │
-│                                 └──────────────┬────────────────┘   │
-└───────────────────────────────────────────────┼────────────────────┘
-                                                │
-              ┌─────────────────────────────────▼──────────────────┐
-              │          .openCodeMemory/  (per-project)            │
-              │                                                      │
-              │  sessions/                                           │
-              │  └── 2026-03-03_14-32_claude-code_auth-fix.md  ◀── canonical source
-              │                                                      │
-              │  memory.db  (SQLite)                                 │
-              │  ├── sessions       (metadata)                       │
-              │  ├── session_chunks (goal, decisions, work…)         │
-              │  ├── session_files  (touched files list)             │
-              │  └── sessions_fts   (FTS5 BM25 search index)         │
-              │                                                      │
-              │  active_<session_id>.jsonl  (file-edit journal)      │
-              └──────────────────────────────────────────────────────┘
+│                    IDE (Claude Code / Cursor)                  │
+│                                                                 │
+│  ┌──────────────┐  MCP         ┌─────────────────────────────┐  │
+│  │  AI Model    │──────────▶   │  ocm.server (FastMCP)       │  │
+│  │ (checkpoint  │  (stdio)     │  ocm__checkpoint            │  │
+│  │  / search)   │◀──────────   │  ocm__search_sessions       │  │
+│  └──────────────┘   result     │  ocm__list_sessions         │  │
+│                                │  ocm__get_session_files     │  │
+│                                └────────────┬────────────────┘  │
+└─────────────────────────────────────────────┼───────────────────┘
+                                              │
+            ┌─────────────────────────────────▼──────────────────┐
+            │          .openCodeMemory/ (per-project)           │
+            │                                                    │
+            │  sessions/                                         │
+            │  └── 2026-03-03_14-32_claude-code_auth-fix.md     │
+            │      ◀── canonical source                          │
+            │                                                    │
+            │  memory.db (SQLite)                                │
+            │  ├── sessions       (metadata)                     │
+            │  ├── session_chunks (goal, decisions, work…)       │
+            │  ├── session_files  (touched files list)           │
+            │  └── sessions_fts   (FTS5 BM25 search index)       │
+            │                                                    │
+            │  active_<session_id>.jsonl (file-edit journal)     │
+            └────────────────────────────────────────────────────┘
 ```
 
 **Hook usage** — Hooks are profile-driven. Claude defaults to a minimal hook profile; Cursor defaults to no hooks unless enabled. Both assistants can use a shared `postToolUse` semantic-checkpoint policy (threshold: 5 tool calls).
@@ -56,13 +57,13 @@ AI coding assistants lose all context when a session ends — what you were buil
 ### From PyPI (recommended)
 
 ```bash
-pip install opencodememory
+pip install ocm-session-memory
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install opencodememory
+uv tool install ocm-session-memory
 ```
 
 After installing, `ocm` and `ocm-hook` are available directly on your PATH.
@@ -79,7 +80,7 @@ uv run ocm --help
 ### Quick start
 
 ```bash
-pip install opencodememory
+pip install ocm-session-memory
 ocm install                    # one-time global config — works in every project
 # Open Claude Code or Cursor and ask it to "save a checkpoint"
 ```
@@ -157,7 +158,7 @@ ocm init
 claude mcp add --scope project opencodememory -- uv run python -m ocm.server
 ```
 
-> If you installed via `pip install opencodememory` without `uv`, replace `uv run python` with `python`.
+> If you installed via `pip install ocm-session-memory` without `uv`, replace `uv run python` with `python`.
 
 **Hooks** written to `.claude/settings.json` (profile-dependent):
 

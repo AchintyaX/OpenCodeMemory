@@ -862,7 +862,7 @@ All hook scripts are thin wrappers that call the `ocm-hook` CLI entry point:
 ocm-hook session-start "$CLAUDE_SESSION_ID" "$CLAUDE_PROJECT_DIR"
 ```
 
-The `ocm-hook` entry point is installed as a console script by `pip install opencodememory`. It parses the event type and arguments, locates the project's `memory.db`, and dispatches to the appropriate handler in `ocm/hooks/`.
+The `ocm-hook` entry point is installed as a console script by `pip install ocm-session-memory`. It parses the event type and arguments, locates the project's `memory.db`, and dispatches to the appropriate handler in `ocm/hooks/`.
 
 The MCP server process and the hook handler are both Python processes accessing the same SQLite database. SQLite's WAL (Write-Ahead Logging) mode handles concurrent access safely. The hook handler uses short transactions and the MCP server uses longer transactions only during `ocm__checkpoint`.
 
@@ -1146,7 +1146,7 @@ openCodeMemory/
 
 ```toml
 [project]
-name = "opencodememory"
+name = "ocm-session-memory"
 version = "0.1.0"
 requires-python = ">=3.11"
 

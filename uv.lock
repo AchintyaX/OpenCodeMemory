@@ -710,7 +710,7 @@ wheels = [
 ]
 
 [[package]]
-name = "opencodememory"
+name = "ocm-session-memory"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

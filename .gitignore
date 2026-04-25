@@ -1,0 +1,8 @@
+.openCodeMemory/
+_publish_test/
+dist/
+.claude/
+.cursor/
+.cursorrules
+.mcp.json
+ ocm/__pycache__/*

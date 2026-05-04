@@ -6,3 +6,4 @@ dist/
 .cursorrules
 .mcp.json
 ocm/__pycache__/*
+**/__pycache__/*

@@ -47,7 +47,6 @@ AI coding assistants lose all context when a session ends — what you were buil
 ## Prerequisites
 
 - Python 3.11+
-- `[uv](https://docs.astral.sh/uv/)` (recommended) or `pip`
 - Claude Code CLI (`claude`) and/or Cursor installed
 
 ---
@@ -60,21 +59,15 @@ AI coding assistants lose all context when a session ends — what you were buil
 pip install ocm-session-memory
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install ocm-session-memory
-```
-
 After installing, `ocm` and `ocm-hook` are available directly on your PATH.
 
-### From source
+### From source (development)
 
 ```bash
 git clone https://github.com/AchintyaX/OpenCodeMemory
 cd OpenCodeMemory
 uv sync
-uv run ocm --help
+ocm --help
 ```
 
 ### Quick start
@@ -104,7 +97,6 @@ Run once, works in every project. This creates the default global store at `~/.o
 
 ```bash
 ocm install
-# or: uv run ocm install
 ```
 
 This creates global storage and configures detected assistants:
@@ -155,10 +147,8 @@ ocm init
 **MCP server** registered at project scope:
 
 ```bash
-claude mcp add --scope project opencodememory -- uv run python -m ocm.server
+claude mcp add --scope project opencodememory -- ocm serve
 ```
-
-> If you installed via `pip install ocm-session-memory` without `uv`, replace `uv run python` with `python`.
 
 **Hooks** written to `.claude/settings.json` (profile-dependent):
 

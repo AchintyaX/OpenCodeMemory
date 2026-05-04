@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
+import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -78,6 +82,9 @@ def cmd_init(yes: bool, cursor_hooks: str, claude_hooks: str) -> None:
     _report(*_update_registry(project_root, db_path))
 
     click.echo("\n✓ openCodeMemory initialized successfully.")
+    click.echo("\nNext: start the MCP server (runs in the background):")
+    click.echo("    ocm serve")
+    click.echo("Use `ocm status` to check the server, `ocm stop` to stop it.")
 
 
 @main.command("install")
@@ -128,6 +135,9 @@ def cmd_install(yes: bool, cursor_hooks: str, claude_hooks: str) -> None:
     click.echo("\n✓ openCodeMemory installed globally.")
     click.echo("  Sessions from all projects → ~/.openCodeMemory/memory.db")
     click.echo("  No need to run 'ocm init' per project.")
+    click.echo("\nNext: start the global MCP server (runs in the background):")
+    click.echo("    ocm serve --global")
+    click.echo("Use `ocm status --global` to check the server, `ocm stop --global` to stop it.")
 
 
 @main.command("list")
@@ -346,6 +356,119 @@ def cmd_checkpoint(
     click.echo(json.dumps(result, indent=2))
 
 
+@main.command("serve")
+@click.option("--foreground", "-f", is_flag=True,
+              help="Stay attached to the terminal instead of daemonizing (for debugging).")
+@click.option("--global", "global_", is_flag=True,
+              help="Target the global server instead of the project server for cwd.")
+def cmd_serve(foreground: bool, global_: bool) -> None:
+    """Start the openCodeMemory MCP server (HTTP, streamable-http, background by default)."""
+    from ocm.install import server_config as sc
+
+    cfg = sc.global_config() if global_ else sc.resolve_for_cwd(Path.cwd())
+
+    # Self-test: open the DB and verify search works before binding the port.
+    n = _self_test(cfg.db_path)
+    click.echo(f"Self-test passed ({n} session(s) in DB).")
+
+    # Refuse to start a duplicate.
+    existing = _read_pid(cfg.pid_path)
+    if existing and _pid_alive(existing):
+        click.echo(f"Server already running: PID {existing}  {cfg.url}")
+        click.echo(f"  Stop: ocm stop{'  --global' if global_ else ''}   or: kill {existing}")
+        return
+
+    if foreground:
+        _write_pid(cfg.pid_path, os.getpid())
+        click.echo(f"openCodeMemory MCP server  PID {os.getpid()}  {cfg.url}  [foreground]")
+        try:
+            from ocm.server import run_http
+            run_http(cfg.host, cfg.port, cfg.project_root)
+        finally:
+            _clear_pid(cfg.pid_path)
+        return
+
+    # Background: re-exec with --foreground, piping output to server.log.
+    with open(cfg.log_path, "ab") as log_file:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "from ocm.install.cli import main; main()",
+             "serve", "--foreground"],
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+            # Set cwd so resolve_for_cwd finds the same server.json in the child.
+            cwd=str(cfg.project_root) if cfg.project_root else str(Path.home()),
+        )
+
+    # Wait up to 5 s for the port to accept connections.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            import socket as _socket
+            with _socket.create_connection(("127.0.0.1", cfg.port), timeout=0.3):
+                break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        click.echo("Server did not start within 5 seconds.", err=True)
+        click.echo(f"  Logs: {cfg.log_path}", err=True)
+        proc.terminate()
+        sys.exit(1)
+
+    _write_pid(cfg.pid_path, proc.pid)
+    click.echo("openCodeMemory MCP server started")
+    click.echo(f"  PID:  {proc.pid}")
+    click.echo(f"  URL:  {cfg.url}")
+    click.echo(f"  Logs: {cfg.log_path}")
+    click.echo(f"  Stop: ocm stop{'  --global' if global_ else ''}   or: kill {proc.pid}")
+
+
+@main.command("status")
+@click.option("--global", "global_", is_flag=True, help="Show the global server.")
+@click.option("--all", "all_", is_flag=True, help="Show all known servers.")
+def cmd_status(global_: bool, all_: bool) -> None:
+    """Show the running status of openCodeMemory MCP server(s)."""
+    from ocm.install import server_config as sc
+
+    if all_:
+        configs = sc.all_known()
+        if not configs:
+            click.echo("No openCodeMemory servers configured yet.")
+            return
+    elif global_:
+        configs = [sc.global_config()]
+    else:
+        configs = [sc.resolve_for_cwd(Path.cwd())]
+
+    for cfg in configs:
+        pid = _read_pid(cfg.pid_path)
+        alive = bool(pid and _pid_alive(pid))
+        status_str = f"running (PID {pid})" if alive else "stopped"
+        click.echo(f"[{cfg.scope}]  {cfg.url}  {status_str}")
+        if alive:
+            click.echo(f"   project:  {cfg.project_root or '(global)'}")
+            click.echo(f"   db:       {cfg.db_path}")
+            click.echo(f"   logs:     {cfg.log_path}")
+            click.echo(f"   kill:     kill {pid}")
+
+
+@main.command("stop")
+@click.option("--global", "global_", is_flag=True, help="Stop the global server.")
+def cmd_stop(global_: bool) -> None:
+    """Stop the openCodeMemory MCP server for the current project (or global)."""
+    from ocm.install import server_config as sc
+
+    cfg = sc.global_config() if global_ else sc.resolve_for_cwd(Path.cwd())
+    pid = _read_pid(cfg.pid_path)
+    if not pid or not _pid_alive(pid):
+        click.echo(f"No server running for [{cfg.scope}].")
+        _clear_pid(cfg.pid_path)
+        return
+    os.kill(pid, signal.SIGTERM)
+    _clear_pid(cfg.pid_path)
+    click.echo(f"Stopped [{cfg.scope}] server (PID {pid}).")
+
+
 @main.command("uninstall")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
 @click.option("--global", "global_", is_flag=True, help="Remove global installation instead of project-local.")
@@ -491,6 +614,50 @@ def _update_registry(project_root: Path, db_path: Path) -> tuple[bool, str]:
         return True, f"Registered in ~/.openCodeMemory/registry.json"
 
     return True, "Already in global registry (skipped)"
+
+
+def _self_test(db_path: Path) -> int:
+    """Open db_path, run a list + search query, return session count. Raises on error."""
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"No database found at {db_path}. "
+            "Run `ocm init` (project) or `ocm install` (global) first."
+        )
+    from ocm.storage.db import Database
+    from ocm.search.fts import search as _fts_search
+    db = Database._connect(db_path)
+    try:
+        n = db.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"]
+        _fts_search("checkpoint", db, limit=1)
+        return n
+    finally:
+        db.close()
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text().strip())
+    except Exception:
+        return None
+
+
+def _write_pid(path: Path, pid: int) -> None:
+    path.write_text(str(pid))
+
+
+def _clear_pid(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def _report(success: bool, message: str) -> None:

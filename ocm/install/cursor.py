@@ -9,27 +9,25 @@ from ocm.install._resources import (
     read_rule,
     remove_text_block,
     _safe_write_json,
-    _safe_write_text,
+    _safe_write_text,  # used by inject_mdc_rule
 )
-
-_CURSOR_MCP_ENTRY = {
-    "command": "uv",
-    "args": ["run", "python", "-m", "ocm.server"],
-}
-
 
 def is_installed() -> bool:
     return _command_exists("cursor") or (Path.home() / ".cursor").exists()
 
 
 def configure_mcp(project_root: Path) -> tuple[bool, str]:
-    return _write_mcp(project_root / ".cursor" / "mcp.json")
+    from ocm.install.server_config import project_config
+    url = project_config(project_root).url
+    return _write_mcp(project_root / ".cursor" / "mcp.json", url)
 
 
 def configure_mcp_global() -> tuple[bool, str]:
+    from ocm.install.server_config import global_config
+    url = global_config().url
     cursor_dir = Path.home() / ".cursor"
     cursor_dir.mkdir(exist_ok=True)
-    return _write_mcp(cursor_dir / "mcp.json")
+    return _write_mcp(cursor_dir / "mcp.json", url)
 
 
 def configure_hooks(project_root: Path, profile: str = "none") -> tuple[bool, str]:
@@ -118,7 +116,7 @@ def _parse_mdc_version(content: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _write_mcp(mcp_path: Path) -> tuple[bool, str]:
+def _write_mcp(mcp_path: Path, url: str) -> tuple[bool, str]:
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     existing: dict = {}
     if mcp_path.exists():
@@ -129,9 +127,9 @@ def _write_mcp(mcp_path: Path) -> tuple[bool, str]:
                 f"Refusing to modify malformed JSON at {mcp_path}. "
                 "Fix the file and re-run."
             )
-    existing.setdefault("mcpServers", {})["opencodememory"] = _CURSOR_MCP_ENTRY
+    existing.setdefault("mcpServers", {})["opencodememory"] = {"url": url}
     _safe_write_json(mcp_path, existing)
-    return True, f"MCP configuration written to {mcp_path}"
+    return True, f"MCP configuration written to {mcp_path} ({url})"
 
 
 def _make_hook_config(profile: str, tool: str) -> dict:

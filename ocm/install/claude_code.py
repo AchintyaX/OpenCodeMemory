@@ -56,14 +56,16 @@ def is_installed() -> bool:
 
 
 def configure_mcp(project_root: Path) -> tuple[bool, str]:
+    from ocm.install.server_config import project_config
+    url = project_config(project_root).url
     try:
         result = subprocess.run(
-            ["claude", "mcp", "add", "--scope", "project", "opencodememory",
-             "--", "uv", "run", "python", "-m", "ocm.server"],
+            ["claude", "mcp", "add", "--transport", "http", "--scope", "project",
+             "opencodememory", url],
             capture_output=True, text=True, cwd=str(project_root),
         )
         if result.returncode == 0:
-            return True, "MCP server registered with Claude Code"
+            return True, f"MCP server registered with Claude Code ({url})"
         return False, f"claude mcp add failed: {result.stderr.strip()}"
     except FileNotFoundError:
         return False, "claude command not found"
@@ -81,14 +83,16 @@ def configure_hooks(project_root: Path, profile: str = "minimal") -> tuple[bool,
 
 
 def configure_mcp_global() -> tuple[bool, str]:
+    from ocm.install.server_config import global_config
+    url = global_config().url
     try:
         result = subprocess.run(
-            ["claude", "mcp", "add", "--scope", "user", "opencodememory",
-             "--", "uv", "run", "python", "-m", "ocm.server"],
+            ["claude", "mcp", "add", "--transport", "http", "--scope", "user",
+             "opencodememory", url],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            return True, "MCP server registered with Claude Code (user scope)"
+            return True, f"MCP server registered with Claude Code user scope ({url})"
         return False, f"claude mcp add failed: {result.stderr.strip()}"
     except FileNotFoundError:
         return False, "claude command not found"
